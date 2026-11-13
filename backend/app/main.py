@@ -1,4 +1,9 @@
 import hashlib
+import json
+import ipaddress
+import re
+import urllib.error
+import urllib.request
 import secrets
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlsplit
@@ -131,6 +136,66 @@ def deactivate_asset(asset_id: int, db: Session = Depends(get_db)):
     asset.active = False
     db.add(AuditEntry(action="deactivate_protected_asset", detail=f"asset_id={asset_id}")); db.commit()
     return {"deactivated":True,"asset_id":asset_id}
+
+@app.post("/api/intel/otx/sync", dependencies=[Depends(require_admin)])
+def sync_otx_indicators(db: Session = Depends(get_db)):
+    """Import a bounded set of subscribed OTX indicators; never auto-block feed entries."""
+    if not settings.otx_api_key:
+        raise HTTPException(status_code=503, detail="OTX_API_KEY is not configured")
+    added = updated = skipped = pulses_seen = 0
+    for page in range(1, 4):
+        request = urllib.request.Request(
+            f"https://otx.alienvault.com/api/v1/pulses/subscribed?page={page}",
+            headers={"X-OTX-API-KEY": settings.otx_api_key, "Accept": "application/json", "User-Agent": "ARY-CyberShield/0.4"}
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=12) as response:
+                raw = response.read(2_000_001)
+            if len(raw) > 2_000_000:
+                raise HTTPException(status_code=502, detail="OTX response exceeded the 2 MB safety limit")
+            payload = json.loads(raw.decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            raise HTTPException(status_code=502, detail=f"OTX returned HTTP {exc.code}") from exc
+        except (urllib.error.URLError, TimeoutError, ValueError) as exc:
+            raise HTTPException(status_code=502, detail=f"OTX feed request failed: {str(exc)[:200]}") from exc
+        pulses = payload.get("results", [])
+        pulses_seen += len(pulses)
+        for pulse in pulses:
+            pulse_name = str(pulse.get("name") or "OTX subscribed pulse")[:150]
+            for raw_indicator in pulse.get("indicators", []):
+                raw_type = str(raw_indicator.get("type") or "").lower()
+                value = str(raw_indicator.get("indicator") or "").strip().lower()
+                kind = None
+                if raw_type in ("ipv4", "ipv6", "ip"):
+                    try:
+                        value = str(ipaddress.ip_address(value)); kind = "ip"
+                    except ValueError:
+                        pass
+                elif raw_type in ("domain", "hostname"):
+                    value = value.rstrip(".")
+                    if len(value) <= 253 and re.fullmatch(r"(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z]{2,63}", value):
+                        kind = "domain"
+                elif raw_type in ("sha256", "filehash-sha256", "file_hash_sha256"):
+                    if re.fullmatch(r"[a-f0-9]{64}", value):
+                        kind = "sha256"
+                if not kind:
+                    skipped += 1
+                    continue
+                item = db.query(ThreatIndicator).filter_by(indicator_type=kind, value=value).first()
+                if item:
+                    item.active = True
+                    item.source = "OTX: " + pulse_name
+                    item.confidence = max(item.confidence or 0, 60)
+                    updated += 1
+                else:
+                    db.add(ThreatIndicator(indicator_type=kind, value=value, source="OTX: " + pulse_name, confidence=60, notes="Imported from subscribed OTX pulse; review context before response."))
+                    added += 1
+        db.commit()
+        if not payload.get("next"):
+            break
+    db.add(AuditEntry(action="sync_otx_indicators", detail=f"added={added};updated={updated};skipped={skipped};pulses={pulses_seen}"))
+    db.commit()
+    return {"source": "AlienVault OTX subscribed pulses", "pages_limit": 3, "pulses_seen": pulses_seen, "added": added, "updated": updated, "skipped_unsupported_or_invalid": skipped, "auto_blocked": 0, "note": "Community threat indicators can be noisy. Matches raise alerts only; they are never auto-blocked."}
 
 @app.get("/api/indicators", dependencies=[Depends(require_admin)])
 def list_indicators(limit: int = 200, db: Session = Depends(get_db)):
