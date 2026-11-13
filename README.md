@@ -1,42 +1,33 @@
 # ARY CyberShield
 
-A defensive security monitoring foundation with a FastAPI backend and React SOC dashboard.
+A defensive security monitoring control plane with a FastAPI backend and React SOC dashboard.
 
-## Included
-- Authenticated telemetry ingestion at `POST /api/events` using `X-Ingest-Key`
-- Pattern classification for SQL injection indicators, XSS probes, path traversal and common scanner paths
-- Admin-protected summary and event APIs using `X-Admin-Key`
-- Admin IP block/unblock records and audit entries
-- Baseline API rate limiting and security response headers
-- Database dependency health reporting and high-severity server log alerts
-- Explicit dashboard CORS allowlist
-- Security hardening notes and starter unit tests
-- React dashboard for event monitoring and manual IP block actions
-- Dockerfiles and Docker Compose scaffolding
+## Current capabilities
+- Authenticated global telemetry ingestion and per-asset ingestion keys
+- Protected asset registry for websites, APIs, applications, databases and admin panels
+- Event-to-asset association and per-asset event filtering
+- Pattern classification for common SQL injection, XSS, path traversal and scanner probes
+- Manual threat-indicator registry for IP addresses, domains and SHA-256 hashes
+- Automatic source-IP IOC correlation during event ingestion; matching IP indicators raise high-severity events
+- Admin-protected event, summary, asset, indicator, block and audit APIs
+- Baseline per-process rate limiting, security response headers, health reporting and server-log alerts
+- React SOC dashboard, Docker scaffolding and starter tests
 
-## Start the API
-1. Copy `.env.example` to `.env` and replace both keys with long random values.
-2. Run `docker compose up --build`.
-3. API health: `http://localhost:8000/health`
-4. API docs: `http://localhost:8000/docs`
+## Start
+1. Copy .env.example to .env and replace both keys with long random values.
+2. Run docker compose up --build.
+3. API health: http://localhost:8000/health; interactive API docs: http://localhost:8000/docs.
+4. Dashboard source is in frontend/; run npm install and npm run dev.
 
-The dashboard source is in `frontend/`. Run `npm install` and `npm run dev` from that directory. Set `VITE_API_URL` if the API is not at `http://localhost:8000`.
+## Multi-asset ingestion
+Create an asset with POST /api/assets using X-Admin-Key and a JSON body such as:
+{"name":"Public website","base_url":"https://example.com","asset_type":"website","description":"Production website"}
+The response contains a randomly generated asset_key. Store it securely; it is displayed only once. Send telemetry to the returned ingest_endpoint with the X-Asset-Key header. Asset keys are stored as SHA-256 hashes, not plaintext. Deactivate an asset with DELETE /api/assets/{asset_id}.
 
-## API examples
-Send an event:
-```bash
-curl -X POST http://localhost:8000/api/events \
-  -H 'Content-Type: application/json' \
-  -H 'X-Ingest-Key: YOUR_INGEST_KEY' \
-  -d '{"source_ip":"203.0.113.10","target":"/search?q=test","method":"GET","detail":"example request"}'
-```
+## Threat indicators
+Add indicators through POST /api/indicators with an admin key. Supported types: ip, domain, and sha256. Current automatic correlation is for source IP indicators only. Domain/hash indicators are stored for analyst workflows and future enrichment; they are not yet automatically extracted from request traffic. No external feed is downloaded automatically.
 
-Read the summary:
-```bash
-curl http://localhost:8000/api/summary -H 'X-Admin-Key: YOUR_ADMIN_KEY'
-```
+## Important limitations
+This is a starter defensive control plane, not a certified production firewall, complete WAF/IDS/IPS or full SOC. IP block records are stored and logged only; they do not block network traffic until a real reverse-proxy, firewall, CDN or edge-provider adapter is configured. Threat intelligence is manually managed; there is no live feed sync, reputation scoring service or automatic domain/hash extraction. The classifier is simple and can produce false positives/negatives. Rate limiting is in-memory and per process. Alerts currently go to server logs only. The dashboard frontend still needs corresponding asset and IOC management screens. Configure CORS origins, TLS, secret management, database migrations/backups, shared edge rate limits, alert delivery, monitoring and independent security review before production deployment.
 
-## Important production limitations
-This repository is a starter control plane, not a certified production firewall or complete WAF/IDS/IPS. The IP block endpoint stores denylist state; enforcement must be connected to an actual reverse proxy, firewall, CDN or edge security provider. The current pattern classifier is intentionally simple and will produce false positives/negatives. The built-in rate limiter is in-memory and per process; it is not a replacement for a shared edge rate limiter. High-severity alerts currently go to server logs only. IP block actions are recorded and logged by a placeholder adapter; they do not block network traffic. Configure the dashboard origin in the backend CORS allowlist before deployment. Before production use, add TLS, secret management, persistent production database, migrations, rate limiting, strict network controls, structured logging, alert delivery, threat-intelligence feeds, robust validation, tests, monitoring and independent security review.
-
-IP geolocation is approximate and cannot reliably identify a person or exact home address. Use evidence collection only for systems you own or are authorized to protect. No hack-back or unauthorized intrusion functionality is included.
+IP geolocation is approximate and cannot reliably identify a person or exact home address. Use evidence collection only on systems you own or are authorized to protect. No hack-back or unauthorized intrusion capability is included.
