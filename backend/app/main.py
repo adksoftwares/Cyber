@@ -1,4 +1,5 @@
 from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from sqlalchemy import desc, func
 from .config import settings
@@ -13,6 +14,7 @@ from .enforcement import LoggingOnlyFirewall
 
 Base.metadata.create_all(bind=engine)
 app = FastAPI(title=settings.app_name, version="0.2.0")
+app.add_middleware(CORSMiddleware, allow_origins=settings.allowed_origins, allow_credentials=False, allow_methods=["GET", "POST", "DELETE"], allow_headers=["Content-Type", "X-Admin-Key", "X-Ingest-Key"])
 app.add_middleware(SecurityMiddleware, limit=120, window_seconds=60)
 firewall = LoggingOnlyFirewall()
 
