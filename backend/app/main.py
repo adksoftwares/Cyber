@@ -61,7 +61,10 @@ def save_event(payload: EventIn, db: Session, asset_id=None):
     except ValueError:
         raise HTTPException(status_code=422, detail="Invalid IP address")
     category, severity = classify(payload.target, payload.detail)
-    host = urlsplit(payload.target if "://" in payload.target else "//" + payload.target).hostname
+    try:
+        host = urlsplit(payload.target if "://" in payload.target else "//" + payload.target).hostname
+    except ValueError:
+        host = None
     indicators = db.query(ThreatIndicator).filter(ThreatIndicator.active.is_(True)).all()
     indicator = next((item for item in indicators if
         (item.indicator_type == "ip" and item.value == source_ip) or
@@ -142,7 +145,7 @@ def sync_otx_indicators(db: Session = Depends(get_db)):
     """Import a bounded set of subscribed OTX indicators; never auto-block feed entries."""
     if not settings.otx_api_key:
         raise HTTPException(status_code=503, detail="OTX_API_KEY is not configured")
-    added = updated = skipped = pulses_seen = 0
+    added = updated = skipped = pulses_seen = processed = 0
     for page in range(1, 4):
         request = urllib.request.Request(
             f"https://otx.alienvault.com/api/v1/pulses/subscribed?page={page}",
@@ -163,6 +166,9 @@ def sync_otx_indicators(db: Session = Depends(get_db)):
         for pulse in pulses:
             pulse_name = str(pulse.get("name") or "OTX subscribed pulse")[:150]
             for raw_indicator in pulse.get("indicators", []):
+                if processed >= 1000:
+                    break
+                processed += 1
                 raw_type = str(raw_indicator.get("type") or "").lower()
                 value = str(raw_indicator.get("indicator") or "").strip().lower()
                 kind = None
@@ -191,11 +197,11 @@ def sync_otx_indicators(db: Session = Depends(get_db)):
                     db.add(ThreatIndicator(indicator_type=kind, value=value, source="OTX: " + pulse_name, confidence=60, notes="Imported from subscribed OTX pulse; review context before response."))
                     added += 1
         db.commit()
-        if not payload.get("next"):
+        if processed >= 1000 or not payload.get("next"):
             break
     db.add(AuditEntry(action="sync_otx_indicators", detail=f"added={added};updated={updated};skipped={skipped};pulses={pulses_seen}"))
     db.commit()
-    return {"source": "AlienVault OTX subscribed pulses", "pages_limit": 3, "pulses_seen": pulses_seen, "added": added, "updated": updated, "skipped_unsupported_or_invalid": skipped, "auto_blocked": 0, "note": "Community threat indicators can be noisy. Matches raise alerts only; they are never auto-blocked."}
+    return {"source": "AlienVault OTX subscribed pulses", "pages_limit": 3, "indicators_limit": 1000, "indicators_processed": processed, "pulses_seen": pulses_seen, "added": added, "updated": updated, "skipped_unsupported_or_invalid": skipped, "auto_blocked": 0, "note": "Community threat indicators can be noisy. Matches raise alerts only; they are never auto-blocked."}
 
 @app.get("/api/indicators", dependencies=[Depends(require_admin)])
 def list_indicators(limit: int = 200, db: Session = Depends(get_db)):
@@ -233,6 +239,8 @@ def block_ip(payload: BlockIn, db: Session = Depends(get_db)):
     row = db.query(BlockedIP).filter_by(ip_address=ip).first()
     if row: row.active=True; row.reason=payload.reason
     else: row=BlockedIP(ip_address=ip, reason=payload.reason); db.add(row)
+    if row.active and row.provider_rule_id:
+        return {"blocked": True, "ip_address": ip, "enforcement": "cloudflare", "provider_rule_id": row.provider_rule_id, "already_enforced": True}
     db.add(AuditEntry(action="block_ip", detail=ip)); db.commit()
     try:
         provider_rule_id = firewall.add_deny_rule(ip, payload.reason)
