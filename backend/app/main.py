@@ -12,7 +12,7 @@ from .security import classify, valid_ip
 from .middleware import SecurityMiddleware
 from .health import dependency_status
 from .alerts import notify_security_event
-from .enforcement import LoggingOnlyFirewall
+from .enforcement import EdgeFirewall
 
 Base.metadata.create_all(bind=engine)
 with engine.begin() as connection:
@@ -21,11 +21,14 @@ with engine.begin() as connection:
         connection.execute(text("ALTER TABLE security_events ADD COLUMN asset_id INTEGER"))
     if "matched_indicator_id" not in columns:
         connection.execute(text("ALTER TABLE security_events ADD COLUMN matched_indicator_id INTEGER"))
+    block_columns = {c["name"] for c in inspect(engine).get_columns("blocked_ips")}
+    if "provider_rule_id" not in block_columns:
+        connection.execute(text("ALTER TABLE blocked_ips ADD COLUMN provider_rule_id VARCHAR(160)"))
 
 app = FastAPI(title=settings.app_name, version="0.3.0")
 app.add_middleware(CORSMiddleware, allow_origins=settings.allowed_origins, allow_credentials=False, allow_methods=["GET", "POST", "DELETE"], allow_headers=["Content-Type", "X-Admin-Key", "X-Ingest-Key", "X-Asset-Key"])
 app.add_middleware(SecurityMiddleware, limit=120, window_seconds=60)
-firewall = LoggingOnlyFirewall()
+firewall = EdgeFirewall()
 
 def require_admin(x_admin_key: str | None = Header(default=None)):
     if not x_admin_key or not secrets.compare_digest(x_admin_key, settings.admin_key):
@@ -145,8 +148,16 @@ def block_ip(payload: BlockIn, db: Session = Depends(get_db)):
     if row: row.active=True; row.reason=payload.reason
     else: row=BlockedIP(ip_address=ip, reason=payload.reason); db.add(row)
     db.add(AuditEntry(action="block_ip", detail=ip)); db.commit()
-    firewall.add_deny_rule(ip, payload.reason)
-    return {"blocked": True, "ip_address": ip, "enforcement": "logged_only"}
+    try:
+        provider_rule_id = firewall.add_deny_rule(ip, payload.reason)
+        row.provider_rule_id = provider_rule_id
+        db.add(AuditEntry(action="edge_block_applied", detail=f"ip={ip};provider=cloudflare"))
+        db.commit()
+        return {"blocked": True, "ip_address": ip, "enforcement": "cloudflare", "provider_rule_id": provider_rule_id}
+    except Exception as exc:
+        db.add(AuditEntry(action="edge_block_not_applied", detail=f"ip={ip};error={str(exc)[:300]}"))
+        db.commit()
+        return {"blocked": True, "ip_address": ip, "enforcement": "not_applied", "warning": str(exc)}
 
 @app.delete("/api/blocks/{ip_address}", dependencies=[Depends(require_admin)])
 def unblock_ip(ip_address: str, db: Session = Depends(get_db)):
@@ -154,9 +165,15 @@ def unblock_ip(ip_address: str, db: Session = Depends(get_db)):
     except ValueError: raise HTTPException(status_code=422, detail="Invalid IP address")
     row=db.query(BlockedIP).filter_by(ip_address=ip).first()
     if not row: raise HTTPException(status_code=404, detail="IP not found")
+    if row.provider_rule_id:
+        try:
+            firewall.remove_deny_rule(row.provider_rule_id)
+            db.add(AuditEntry(action="edge_unblock_applied", detail=f"ip={ip};provider=cloudflare"))
+            row.provider_rule_id = None
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=f"Edge provider could not remove the rule: {str(exc)[:300]}")
     row.active=False; db.add(AuditEntry(action="unblock_ip", detail=ip)); db.commit()
-    firewall.remove_deny_rule(ip)
-    return {"blocked": False, "ip_address": ip, "enforcement": "logged_only"}
+    return {"blocked": False, "ip_address": ip, "enforcement": "cloudflare" if not row.provider_rule_id else "not_applied"}
 
 @app.get("/api/audit", dependencies=[Depends(require_admin)])
 def audit(limit: int = 100, db: Session = Depends(get_db)):
