@@ -1,5 +1,6 @@
 import hashlib
 import secrets
+from urllib.parse import urlsplit
 from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
@@ -52,13 +53,17 @@ def save_event(payload: EventIn, db: Session, asset_id=None):
     except ValueError:
         raise HTTPException(status_code=422, detail="Invalid IP address")
     category, severity = classify(payload.target, payload.detail)
-    indicator = db.query(ThreatIndicator).filter_by(indicator_type="ip", value=source_ip, active=True).first()
+    host = urlsplit(payload.target if "://" in payload.target else "//" + payload.target).hostname
+    indicators = db.query(ThreatIndicator).filter(ThreatIndicator.active.is_(True)).all()
+    indicator = next((item for item in indicators if
+        (item.indicator_type == "ip" and item.value == source_ip) or
+        (item.indicator_type == "domain" and host and (host.lower() == item.value or host.lower().endswith("." + item.value)))), None)
     if indicator:
         category, severity = "threat_intelligence_match", "high"
     event = SecurityEvent(source_ip=source_ip, target=payload.target, method=payload.method.upper(), category=category, severity=severity, detail=payload.detail, user_agent=payload.user_agent, asset_id=asset_id, matched_indicator_id=indicator.id if indicator else None)
     db.add(event); db.commit(); db.refresh(event)
     notify_security_event(event)
-    return {"id": event.id, "category": category, "severity": severity, "threat_intelligence_match": bool(indicator)}
+    return {"id": event.id, "category": category, "severity": severity, "threat_intelligence_match": bool(indicator), "matched_indicator_type": indicator.indicator_type if indicator else None}
 
 @app.post("/api/events", dependencies=[Depends(require_ingest)])
 def ingest_event(payload: EventIn, db: Session = Depends(get_db)):
