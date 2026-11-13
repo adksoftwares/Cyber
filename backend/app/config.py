@@ -6,6 +6,9 @@ class Settings(BaseSettings):
     ingest_key: str = "change-this-ingest-key"
     admin_key: str = "change-this-admin-key"
     allowed_origins: list[str] = ["http://localhost:5173"]
+    cloudflare_api_token: str = ""
+    cloudflare_zone_id: str = ""
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
 settings = Settings()
+
