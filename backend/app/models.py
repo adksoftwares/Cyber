@@ -15,6 +15,7 @@ class SecurityEvent(Base):
     user_agent = Column(Text, default="")
     asset_id = Column(Integer, index=True, nullable=True)
     matched_indicator_id = Column(Integer, nullable=True)
+    file_hash = Column(String(64), nullable=True, index=True)
 
 class BlockedIP(Base):
     __tablename__ = "blocked_ips"
