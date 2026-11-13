@@ -10,6 +10,7 @@ services:
       ALLOWED_ORIGINS: '["http://localhost:5173","http://localhost:8080"]'
       CLOUDFLARE_API_TOKEN: ${CLOUDFLARE_API_TOKEN:-}
       CLOUDFLARE_ZONE_ID: ${CLOUDFLARE_ZONE_ID:-}
+      OTX_API_KEY: ${OTX_API_KEY:-}
     volumes:
       - cybershield-data:/app/data
     restart: unless-stopped
