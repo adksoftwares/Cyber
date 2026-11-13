@@ -7,6 +7,18 @@ class EventIn(BaseModel):
     method: str = Field(default="GET", max_length=12)
     detail: str = Field(default="", max_length=4000)
     user_agent: str = Field(default="", max_length=1000)
+    file_hash: str | None = Field(default=None, min_length=64, max_length=64)
+
+    @field_validator("file_hash")
+    @classmethod
+    def validate_file_hash(cls, value):
+        if value is None:
+            return None
+        import re
+        value = value.strip().lower()
+        if not re.fullmatch(r"[a-f0-9]{64}", value):
+            raise ValueError("file_hash must be a SHA-256 hexadecimal digest")
+        return value
 
 class BlockIn(BaseModel):
     ip_address: str = Field(min_length=3, max_length=64)
