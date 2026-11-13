@@ -23,6 +23,7 @@ class BlockedIP(Base):
     reason = Column(String(500), default="Manual block")
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     active = Column(Boolean, default=True)
+    provider_rule_id = Column(String(160), nullable=True)
 
 class AuditEntry(Base):
     __tablename__ = "audit_entries"
