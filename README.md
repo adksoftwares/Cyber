@@ -21,8 +21,9 @@ A defensive security monitoring control plane with a FastAPI backend and React S
 ## Start
 1. Copy .env.example to .env and replace both keys with long random values.
 2. Run docker compose up --build.
-3. API health: http://localhost:8000/health; interactive API docs: http://localhost:8000/docs.
-4. Dashboard source is in frontend/; run npm install and npm run dev.
+3. Open the SOC dashboard at http://localhost:8080.
+4. API health: http://localhost:8000/health; interactive API docs: http://localhost:8000/docs.
+5. For frontend development outside Docker, run npm install and npm run dev in frontend/.
 
 ## Multi-asset ingestion
 Create an asset with POST /api/assets using X-Admin-Key and a JSON body such as:
