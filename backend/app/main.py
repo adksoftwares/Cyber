@@ -1,4 +1,6 @@
 import hashlib
+import csv
+import io
 import json
 import ipaddress
 import re
@@ -8,6 +10,7 @@ import secrets
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlsplit
 from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from sqlalchemy import desc, func, inspect, text
@@ -34,7 +37,7 @@ with engine.begin() as connection:
     if "provider_rule_id" not in block_columns:
         connection.execute(text("ALTER TABLE blocked_ips ADD COLUMN provider_rule_id VARCHAR(160)"))
 
-app = FastAPI(title=settings.app_name, version="0.3.0")
+app = FastAPI(title=settings.app_name, version="0.4.0")
 app.add_middleware(CORSMiddleware, allow_origins=settings.allowed_origins, allow_credentials=False, allow_methods=["GET", "POST", "DELETE"], allow_headers=["Content-Type", "X-Admin-Key", "X-Ingest-Key", "X-Asset-Key"])
 app.add_middleware(SecurityMiddleware, limit=120, window_seconds=60)
 firewall = EdgeFirewall()
@@ -109,6 +112,20 @@ def traffic_analytics(minutes: int = 5, db: Session = Depends(get_db)):
     cutoff = datetime.now(timezone.utc) - timedelta(minutes=minutes)
     rows = db.query(SecurityEvent.source_ip, func.count(SecurityEvent.id).label("event_count")).filter(SecurityEvent.created_at >= cutoff).group_by(SecurityEvent.source_ip).order_by(desc("event_count")).limit(20).all()
     return {"window_minutes": minutes, "sources": [{"source_ip": ip, "events": count} for ip, count in rows]}
+
+@app.get("/api/events/export", dependencies=[Depends(require_admin)])
+def export_events(limit: int = 5000, db: Session = Depends(get_db)):
+    rows = db.query(SecurityEvent).order_by(desc(SecurityEvent.created_at)).limit(max(1, min(limit, 10000))).all()
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["id", "created_at", "source_ip", "asset_id", "method", "target", "category", "severity", "detail", "file_hash"])
+    def safe_cell(value):
+        text_value = "" if value is None else str(value)
+        return "'" + text_value if text_value.startswith(("=", "+", "-", "@", "\t", "\r")) else text_value
+    for row in rows:
+        writer.writerow([safe_cell(value) for value in (row.id, row.created_at, row.source_ip, row.asset_id, row.method, row.target, row.category, row.severity, row.detail, row.file_hash)])
+    output.seek(0)
+    return StreamingResponse(iter([output.getvalue()]), media_type="text/csv", headers={"Content-Disposition": "attachment; filename=ary-cybershield-events.csv"})
 
 @app.get("/api/events", dependencies=[Depends(require_admin)])
 def events(limit: int = 100, asset_id: int | None = None, severity: str | None = None, db: Session = Depends(get_db)):
