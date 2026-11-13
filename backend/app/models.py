@@ -13,6 +13,8 @@ class SecurityEvent(Base):
     severity = Column(String(16), default="low", index=True)
     detail = Column(Text, default="")
     user_agent = Column(Text, default="")
+    asset_id = Column(Integer, index=True, nullable=True)
+    matched_indicator_id = Column(Integer, nullable=True)
 
 class BlockedIP(Base):
     __tablename__ = "blocked_ips"
@@ -28,4 +30,26 @@ class AuditEntry(Base):
     action = Column(String(100))
     actor = Column(String(100), default="admin")
     detail = Column(Text, default="")
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+class ProtectedAsset(Base):
+    __tablename__ = "protected_assets"
+    id = Column(Integer, primary_key=True)
+    name = Column(String(160), nullable=False)
+    base_url = Column(String(500), default="")
+    asset_type = Column(String(40), default="website")
+    description = Column(Text, default="")
+    ingest_token_hash = Column(String(64), unique=True, nullable=False)
+    active = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+class ThreatIndicator(Base):
+    __tablename__ = "threat_indicators"
+    id = Column(Integer, primary_key=True)
+    indicator_type = Column(String(20), nullable=False, index=True)
+    value = Column(String(255), nullable=False, index=True)
+    source = Column(String(160), default="manual")
+    confidence = Column(Integer, default=50)
+    notes = Column(Text, default="")
+    active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
