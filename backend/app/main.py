@@ -1,5 +1,6 @@
 import hashlib
 import secrets
+from datetime import datetime, timedelta, timezone
 from urllib.parse import urlsplit
 from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -22,6 +23,8 @@ with engine.begin() as connection:
         connection.execute(text("ALTER TABLE security_events ADD COLUMN asset_id INTEGER"))
     if "matched_indicator_id" not in columns:
         connection.execute(text("ALTER TABLE security_events ADD COLUMN matched_indicator_id INTEGER"))
+    if "file_hash" not in columns:
+        connection.execute(text("ALTER TABLE security_events ADD COLUMN file_hash VARCHAR(64)"))
     block_columns = {c["name"] for c in inspect(engine).get_columns("blocked_ips")}
     if "provider_rule_id" not in block_columns:
         connection.execute(text("ALTER TABLE blocked_ips ADD COLUMN provider_rule_id VARCHAR(160)"))
@@ -57,13 +60,18 @@ def save_event(payload: EventIn, db: Session, asset_id=None):
     indicators = db.query(ThreatIndicator).filter(ThreatIndicator.active.is_(True)).all()
     indicator = next((item for item in indicators if
         (item.indicator_type == "ip" and item.value == source_ip) or
-        (item.indicator_type == "domain" and host and (host.lower() == item.value or host.lower().endswith("." + item.value)))), None)
+        (item.indicator_type == "domain" and host and (host.lower() == item.value or host.lower().endswith("." + item.value))) or
+        (item.indicator_type == "sha256" and payload.file_hash and item.value == payload.file_hash)), None)
     if indicator:
         category, severity = "threat_intelligence_match", "high"
-    event = SecurityEvent(source_ip=source_ip, target=payload.target, method=payload.method.upper(), category=category, severity=severity, detail=payload.detail, user_agent=payload.user_agent, asset_id=asset_id, matched_indicator_id=indicator.id if indicator else None)
+    cutoff = datetime.now(timezone.utc) - timedelta(seconds=60)
+    recent_count = db.query(func.count(SecurityEvent.id)).filter(SecurityEvent.source_ip == source_ip, SecurityEvent.created_at >= cutoff).scalar() or 0
+    if recent_count >= 59 and severity != "high":
+        category, severity = "traffic_rate_anomaly", "high"
+    event = SecurityEvent(source_ip=source_ip, target=payload.target, method=payload.method.upper(), category=category, severity=severity, detail=payload.detail, user_agent=payload.user_agent, asset_id=asset_id, matched_indicator_id=indicator.id if indicator else None, file_hash=payload.file_hash)
     db.add(event); db.commit(); db.refresh(event)
     notify_security_event(event)
-    return {"id": event.id, "category": category, "severity": severity, "threat_intelligence_match": bool(indicator), "matched_indicator_type": indicator.indicator_type if indicator else None}
+    return {"id": event.id, "category": category, "severity": severity, "threat_intelligence_match": bool(indicator), "matched_indicator_type": indicator.indicator_type if indicator else None, "rate_anomaly": category == "traffic_rate_anomaly"}
 
 @app.post("/api/events", dependencies=[Depends(require_ingest)])
 def ingest_event(payload: EventIn, db: Session = Depends(get_db)):
@@ -87,12 +95,20 @@ def summary(db: Session = Depends(get_db)):
     indicators = db.query(func.count(ThreatIndicator.id)).filter(ThreatIndicator.active.is_(True)).scalar() or 0
     return {"events": total, "high_severity": high, "blocked_ips": blocked, "protected_assets": assets, "active_indicators": indicators}
 
+@app.get("/api/analytics/traffic", dependencies=[Depends(require_admin)])
+def traffic_analytics(minutes: int = 5, db: Session = Depends(get_db)):
+    minutes = max(1, min(minutes, 60))
+    cutoff = datetime.now(timezone.utc) - timedelta(minutes=minutes)
+    rows = db.query(SecurityEvent.source_ip, func.count(SecurityEvent.id).label("event_count")).filter(SecurityEvent.created_at >= cutoff).group_by(SecurityEvent.source_ip).order_by(desc("event_count")).limit(20).all()
+    return {"window_minutes": minutes, "sources": [{"source_ip": ip, "events": count} for ip, count in rows]}
+
 @app.get("/api/events", dependencies=[Depends(require_admin)])
-def events(limit: int = 100, asset_id: int | None = None, db: Session = Depends(get_db)):
+def events(limit: int = 100, asset_id: int | None = None, severity: str | None = None, db: Session = Depends(get_db)):
     query = db.query(SecurityEvent)
     if asset_id is not None: query = query.filter(SecurityEvent.asset_id == asset_id)
+    if severity in ("low", "medium", "high"): query = query.filter(SecurityEvent.severity == severity)
     rows = query.order_by(desc(SecurityEvent.created_at)).limit(max(1, min(limit, 500))).all()
-    return [{"id":r.id,"created_at":r.created_at,"source_ip":r.source_ip,"target":r.target,"method":r.method,"category":r.category,"severity":r.severity,"detail":r.detail,"asset_id":r.asset_id,"matched_indicator_id":r.matched_indicator_id} for r in rows]
+    return [{"id":r.id,"created_at":r.created_at,"source_ip":r.source_ip,"target":r.target,"method":r.method,"category":r.category,"severity":r.severity,"detail":r.detail,"asset_id":r.asset_id,"matched_indicator_id":r.matched_indicator_id,"file_hash":r.file_hash} for r in rows]
 
 @app.get("/api/assets", dependencies=[Depends(require_admin)])
 def list_assets(db: Session = Depends(get_db)):
@@ -143,7 +159,7 @@ def deactivate_indicator(indicator_id: int, db: Session = Depends(get_db)):
 @app.get("/api/blocks", dependencies=[Depends(require_admin)])
 def list_blocks(db: Session = Depends(get_db)):
     rows = db.query(BlockedIP).filter(BlockedIP.active.is_(True)).order_by(desc(BlockedIP.created_at)).all()
-    return [{"ip_address":r.ip_address,"reason":r.reason,"created_at":r.created_at} for r in rows]
+    return [{"ip_address":r.ip_address,"reason":r.reason,"created_at":r.created_at,"provider_enforced":bool(r.provider_rule_id)} for r in rows]
 
 @app.post("/api/blocks", dependencies=[Depends(require_admin)])
 def block_ip(payload: BlockIn, db: Session = Depends(get_db)):
@@ -170,15 +186,17 @@ def unblock_ip(ip_address: str, db: Session = Depends(get_db)):
     except ValueError: raise HTTPException(status_code=422, detail="Invalid IP address")
     row=db.query(BlockedIP).filter_by(ip_address=ip).first()
     if not row: raise HTTPException(status_code=404, detail="IP not found")
+    removed_provider_rule = False
     if row.provider_rule_id:
         try:
             firewall.remove_deny_rule(row.provider_rule_id)
+            removed_provider_rule = True
             db.add(AuditEntry(action="edge_unblock_applied", detail=f"ip={ip};provider=cloudflare"))
             row.provider_rule_id = None
         except Exception as exc:
             raise HTTPException(status_code=502, detail=f"Edge provider could not remove the rule: {str(exc)[:300]}")
     row.active=False; db.add(AuditEntry(action="unblock_ip", detail=ip)); db.commit()
-    return {"blocked": False, "ip_address": ip, "enforcement": "provider_rule_removed" if not row.active and not row.provider_rule_id else "record_only"}
+    return {"blocked": False, "ip_address": ip, "enforcement": "provider_rule_removed" if removed_provider_rule else "record_only"}
 
 @app.get("/api/audit", dependencies=[Depends(require_admin)])
 def audit(limit: int = 100, db: Session = Depends(get_db)):
