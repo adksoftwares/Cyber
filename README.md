@@ -7,6 +7,10 @@ A defensive security monitoring foundation with a FastAPI backend and React SOC 
 - Pattern classification for SQL injection indicators, XSS probes, path traversal and common scanner paths
 - Admin-protected summary and event APIs using `X-Admin-Key`
 - Admin IP block/unblock records and audit entries
+- Baseline API rate limiting and security response headers
+- Database dependency health reporting and high-severity server log alerts
+- Explicit dashboard CORS allowlist
+- Security hardening notes and starter unit tests
 - React dashboard for event monitoring and manual IP block actions
 - Dockerfiles and Docker Compose scaffolding
 
@@ -33,6 +37,6 @@ curl http://localhost:8000/api/summary -H 'X-Admin-Key: YOUR_ADMIN_KEY'
 ```
 
 ## Important production limitations
-This repository is a starter control plane, not a certified production firewall or complete WAF/IDS/IPS. The IP block endpoint stores denylist state; enforcement must be connected to an actual reverse proxy, firewall, CDN or edge security provider. The current pattern classifier is intentionally simple and will produce false positives/negatives. Before production use, add TLS, secret management, persistent production database, migrations, rate limiting, strict network controls, structured logging, alert delivery, threat-intelligence feeds, robust validation, tests, monitoring and independent security review.
+This repository is a starter control plane, not a certified production firewall or complete WAF/IDS/IPS. The IP block endpoint stores denylist state; enforcement must be connected to an actual reverse proxy, firewall, CDN or edge security provider. The current pattern classifier is intentionally simple and will produce false positives/negatives. The built-in rate limiter is in-memory and per process; it is not a replacement for a shared edge rate limiter. High-severity alerts currently go to server logs only. IP block actions are recorded and logged by a placeholder adapter; they do not block network traffic. Configure the dashboard origin in the backend CORS allowlist before deployment. Before production use, add TLS, secret management, persistent production database, migrations, rate limiting, strict network controls, structured logging, alert delivery, threat-intelligence feeds, robust validation, tests, monitoring and independent security review.
 
 IP geolocation is approximate and cannot reliably identify a person or exact home address. Use evidence collection only for systems you own or are authorized to protect. No hack-back or unauthorized intrusion functionality is included.
