@@ -178,7 +178,7 @@ def unblock_ip(ip_address: str, db: Session = Depends(get_db)):
         except Exception as exc:
             raise HTTPException(status_code=502, detail=f"Edge provider could not remove the rule: {str(exc)[:300]}")
     row.active=False; db.add(AuditEntry(action="unblock_ip", detail=ip)); db.commit()
-    return {"blocked": False, "ip_address": ip, "enforcement": "cloudflare" if not row.provider_rule_id else "not_applied"}
+    return {"blocked": False, "ip_address": ip, "enforcement": "provider_rule_removed" if not row.active and not row.provider_rule_id else "record_only"}
 
 @app.get("/api/audit", dependencies=[Depends(require_admin)])
 def audit(limit: int = 100, db: Session = Depends(get_db)):
