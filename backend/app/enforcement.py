@@ -4,6 +4,7 @@ Only call this adapter for assets/zones the operator owns and has authorized.
 When credentials are absent the adapter remains in logging-only mode.
 """
 import json
+import ipaddress
 import logging
 import urllib.error
 import urllib.request
@@ -40,9 +41,11 @@ class EdgeFirewall:
         return body.get("result")
 
     def add_deny_rule(self, ip_address: str, reason: str) -> str:
+        address = ipaddress.ip_address(ip_address)
+        target = "ip" if address.version == 4 else "ip6"
         result = self._request("POST", f"/zones/{self.zone_id}/firewall/access_rules/rules", {
             "mode": "block",
-            "configuration": {"target": "ip", "value": ip_address},
+            "configuration": {"target": target, "value": str(address)},
             "notes": (reason or "ARY CyberShield security response")[:500]
         })
         rule_id = result.get("id") if isinstance(result, dict) else None
