@@ -11,6 +11,7 @@ A defensive security monitoring control plane with a FastAPI backend and React S
 - Traffic-volume analytics and a basic per-source rate-anomaly heuristic
 - Active denylist review/unblock, administrative audit history and automatic dashboard refresh
 - Manual threat-indicator registry for IP addresses, domains and SHA-256 hashes
+- Optional bounded AlienVault OTX subscribed-pulse sync (up to three pages per manual sync; no automatic blocking)
 - Source-IP, request-host and optional telemetry SHA-256 correlation against active indicators
 - Optional Cloudflare zone IP Access Rules adapter for actual edge IP block/unblock actions when configured
 - Automatic IP, domain and supplied SHA-256 IOC correlation during event ingestion
@@ -31,7 +32,7 @@ Create an asset with POST /api/assets using X-Admin-Key and a JSON body such as:
 The response contains a randomly generated asset_key. Store it securely; it is displayed only once. Send telemetry to the returned ingest_endpoint with the X-Asset-Key header. Asset keys are stored as SHA-256 hashes, not plaintext. Deactivate an asset with DELETE /api/assets/{asset_id}.
 
 ## Threat indicators
-Add indicators through POST /api/indicators with an admin key. Supported types: ip, domain, and sha256. Automatic correlation checks source IPs, request hostnames and an optional server-computed SHA-256 file digest. Hash matching only works when the trusted protected application submits the digest; CyberShield does not scan files. No external feed is downloaded automatically.
+Add indicators through POST /api/indicators with an admin key. Supported types: ip, domain, and sha256. Automatic correlation checks source IPs, request hostnames and an optional server-computed SHA-256 file digest. Hash matching only works when the trusted protected application submits the digest; CyberShield does not scan files. Optional OTX import is available through `POST /api/intel/otx/sync` when `OTX_API_KEY` is configured. It imports supported IP, domain and SHA-256 indicators from up to three pages of subscribed pulses. OTX is community-sourced and can be noisy; feed matches only raise high-severity telemetry and are never automatically blocked.
 
 ## Optional Cloudflare edge enforcement
 Set CLOUDFLARE_API_TOKEN and CLOUDFLARE_ZONE_ID in the backend environment to enable the Cloudflare adapter. Use a narrowly scoped token for the specific zone with the permissions required to manage IP Access Rules. The dashboard block action then attempts to create a Cloudflare IP block and records the returned provider rule ID; unblocking removes that exact provider rule. If credentials are absent or the provider call fails, the denylist record is still saved but the API reports enforcement as not applied. This integration has not been run or verified in this repository session. Review Cloudflare API permissions, plan availability and current API documentation before enabling it in production.
