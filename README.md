@@ -7,7 +7,7 @@ A defensive security monitoring control plane with a FastAPI backend and React S
 - Protected asset registry for websites, APIs, applications, databases and admin panels
 - Event-to-asset association and per-asset event filtering
 - Pattern classification for common SQL injection, XSS, path traversal and scanner probes
-- Manual threat-indicator registry for IP addresses, domains and SHA-256 hashes
+- Manual threat-indicator registry for IP addresses, domains and SHA-256 hashes\n- Source-IP and request-host correlation against active IP/domain indicators\n- Optional Cloudflare zone IP Access Rules adapter for actual edge IP block/unblock actions when configured
 - Automatic source-IP IOC correlation during event ingestion; matching IP indicators raise high-severity events
 - Admin-protected event, summary, asset, indicator, block and audit APIs
 - Baseline per-process rate limiting, security response headers, health reporting and server-log alerts
@@ -27,7 +27,7 @@ The response contains a randomly generated asset_key. Store it securely; it is d
 ## Threat indicators
 Add indicators through POST /api/indicators with an admin key. Supported types: ip, domain, and sha256. Current automatic correlation is for source IP indicators only. Domain/hash indicators are stored for analyst workflows and future enrichment; they are not yet automatically extracted from request traffic. No external feed is downloaded automatically.
 
-## Important limitations
+## Optional Cloudflare edge enforcement\nSet CLOUDFLARE_API_TOKEN and CLOUDFLARE_ZONE_ID in the backend environment to enable the Cloudflare adapter. Use a narrowly scoped token for the specific zone with the permissions required to manage IP Access Rules. The dashboard block action then attempts to create a Cloudflare IP block and records the returned provider rule ID; unblocking removes that exact provider rule. If credentials are absent or the provider call fails, the denylist record is still saved but the API reports enforcement as not applied. This integration has not been run or verified in this repository session. Review Cloudflare API permissions, plan availability and current API documentation before enabling it in production.\n\n## Important limitations
 This is a starter defensive control plane, not a certified production firewall, complete WAF/IDS/IPS or full SOC. IP block records are stored and logged only; they do not block network traffic until a real reverse-proxy, firewall, CDN or edge-provider adapter is configured. Threat intelligence is manually managed; there is no live feed sync, reputation scoring service or automatic domain/hash extraction. The classifier is simple and can produce false positives/negatives. Rate limiting is in-memory and per process. Alerts currently go to server logs only. The dashboard frontend still needs corresponding asset and IOC management screens. Configure CORS origins, TLS, secret management, database migrations/backups, shared edge rate limits, alert delivery, monitoring and independent security review before production deployment.
 
 IP geolocation is approximate and cannot reliably identify a person or exact home address. Use evidence collection only on systems you own or are authorized to protect. No hack-back or unauthorized intrusion capability is included.
