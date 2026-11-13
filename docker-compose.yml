@@ -1,0 +1,12 @@
+services:
+  api:
+    build: ./backend
+    ports: ["8000:8000"]
+    environment:
+      DATABASE_URL: sqlite:///./data/cybershield.db
+      INGEST_KEY: ${INGEST_KEY:-replace-this-ingest-key}
+      ADMIN_KEY: ${ADMIN_KEY:-replace-this-admin-key}
+    volumes:
+      - cybershield-data:/app/data
+volumes:
+  cybershield-data:
