@@ -5,6 +5,7 @@ class Settings(BaseSettings):
     database_url: str = "sqlite:///./cybershield.db"
     ingest_key: str = "change-this-ingest-key"
     admin_key: str = "change-this-admin-key"
+    allowed_origins: list[str] = ["http://localhost:5173"]
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
 settings = Settings()
