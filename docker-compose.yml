@@ -1,12 +1,27 @@
 services:
   api:
     build: ./backend
-    ports: ["8000:8000"]
+    ports:
+      - "8000:8000"
     environment:
       DATABASE_URL: sqlite:///./data/cybershield.db
-      INGEST_KEY: ${INGEST_KEY:-replace-this-ingest-key}
-      ADMIN_KEY: ${ADMIN_KEY:-replace-this-admin-key}
+      INGEST_KEY: ${INGEST_KEY:?Set INGEST_KEY in .env}
+      ADMIN_KEY: ${ADMIN_KEY:?Set ADMIN_KEY in .env}
+      ALLOWED_ORIGINS: '["http://localhost:5173","http://localhost:8080"]'
+      CLOUDFLARE_API_TOKEN: ${CLOUDFLARE_API_TOKEN:-}
+      CLOUDFLARE_ZONE_ID: ${CLOUDFLARE_ZONE_ID:-}
     volumes:
       - cybershield-data:/app/data
+    restart: unless-stopped
+  dashboard:
+    build:
+      context: ./frontend
+      args:
+        VITE_API_URL: http://localhost:8000
+    ports:
+      - "8080:80"
+    depends_on:
+      - api
+    restart: unless-stopped
 volumes:
   cybershield-data:
